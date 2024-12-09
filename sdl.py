@@ -2,101 +2,120 @@ import pickle
 import cv2
 import mediapipe as mp
 import numpy as np
-import os
 from tensorflow.keras.models import load_model
+import streamlit as st
 
-# Mendapatkan direktori dari skrip saat ini
-base_dir = os.path.dirname(os.path.abspath(__file__))
-
-# Memuat model DNN yang sudah dilatih menggunakan path relatif
-model_path = os.path.join(base_dir, 'dnn_model.h5')
-model = load_model(model_path)
-
-# Mulai pengambilan video
-cap = cv2.VideoCapture(0)  # Ganti dengan 0 jika hanya ada satu webcam
-if not cap.isOpened():
-    print("Error: Tidak bisa membuka video.")
-    exit()
-
-mp_hands = mp.solutions.hands
-mp_drawing = mp.solutions.drawing_utils
-mp_drawing_styles = mp.solutions.drawing_styles
-
-hands = mp_hands.Hands(static_image_mode=True, min_detection_confidence=0.3)
+# Memuat model DNN yang sudah dilatih
+model = load_model('dnn_model.h5')
 
 # Mendefinisikan label untuk karakter tangan (dari 0 sampai 23 untuk A sampai Y)
 labels_dict = {0: 'A', 1: 'B', 2: 'C', 3: 'D', 4: 'E', 5: 'F', 6: 'G', 7: 'H', 8: 'I', 9: 'K', 10: 'L', 11: 'M',
                12: 'N', 13: 'O', 14: 'P', 15: 'Q', 16: 'R', 17: 'S', 18: 'T', 19: 'U', 20: 'V', 21: 'W', 22: 'X',
                23: 'Y'}
 
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        print("Error: Gagal menangkap gambar.")
-        continue  # Coba lagi jika gagal menangkap gambar
+# Inisialisasi MediaPipe Hand Tracking
+mp_hands = mp.solutions.hands
+mp_drawing = mp.solutions.drawing_utils
+mp_drawing_styles = mp.solutions.drawing_styles
+hands = mp_hands.Hands(static_image_mode=False, min_detection_confidence=0.3)
 
-    H, W, _ = frame.shape
-    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+# Streamlit UI Setup
+st.title("Hand Gesture Recognition")
+st.write("Use your webcam to make hand gestures. The model will recognize the gesture in real-time.")
 
-    results = hands.process(frame_rgb)
-    if results.multi_hand_landmarks:
-        for hand_landmarks in results.multi_hand_landmarks:
-            # Menggambar landmark tangan dan koneksinya
-            mp_drawing.draw_landmarks(
-                frame,  # gambar untuk menggambar
-                hand_landmarks,  # output model
-                mp_hands.HAND_CONNECTIONS,  # koneksi tangan
-                mp_drawing_styles.get_default_hand_landmarks_style(),
-                mp_drawing_styles.get_default_hand_connections_style()
-            )
+# Tombol Start dan Stop
+start_button = st.button("Start Video Stream")
+stop_button = st.button("Stop Video Stream")
 
-            data_aux = []
-            x_ = []
-            y_ = []
+# Create a placeholder for the webcam video stream
+frame_placeholder = st.empty()
 
-            # Mengambil landmark tangan
-            for i in range(len(hand_landmarks.landmark)):
-                x = hand_landmarks.landmark[i].x
-                y = hand_landmarks.landmark[i].y
+# Flag untuk memastikan hanya satu kali release webcam
+is_streaming = False
+cap = None
 
-                x_.append(x)
-                y_.append(y)
+# Mulai Streaming Video Jika Tombol "Start" Ditekan
+if start_button and not is_streaming:
+    is_streaming = True
+    # Start video capture with OpenCV
+    cap = cv2.VideoCapture(0)
 
-            # Menormalisasi data landmark
-            for i in range(len(hand_landmarks.landmark)):
-                x = hand_landmarks.landmark[i].x
-                y = hand_landmarks.landmark[i].y
-                data_aux.append(x - min(x_))  # Normalisasi x
-                data_aux.append(y - min(y_))  # Normalisasi y
+    # Check if webcam is available
+    if not cap.isOpened():
+        st.error("Error: Cannot access webcam.")
+        cap.release()
+        exit()
 
-            # Pastikan data_aux memiliki panjang yang sesuai dengan input model (42)
-            if len(data_aux) == 42:
-                # Mengubah data menjadi format yang sesuai untuk model
-                input_data = np.array([data_aux])  # Membuat input dalam bentuk (1, 42)
-                input_data = input_data.astype(np.float32)  # Pastikan tipe data sesuai
+    # Loop untuk menangkap dan memproses video
+    while is_streaming:
+        ret, frame = cap.read()
+        if not ret:
+            st.error("Failed to capture image.")
+            break
 
-                # Melakukan prediksi dengan model
-                prediction = model.predict(input_data)
-                predicted_class = np.argmax(prediction)  # Mendapatkan kelas dengan probabilitas tertinggi
-                predicted_character = labels_dict[predicted_class]  # Mendapatkan label yang sesuai
+        H, W, _ = frame.shape
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-                # Menentukan koordinat untuk menampilkan teks prediksi
-                x1 = int(min(x_) * W) - 10
-                y1 = int(min(y_) * H) - 10
-                x2 = int(max(x_) * W) + 10
-                y2 = int(max(y_) * H) + 10
+        # Process the frame with MediaPipe to detect hand landmarks
+        results = hands.process(frame_rgb)
 
-                # Menggambar kotak dan teks prediksi pada frame
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 0), 4)
-                cv2.putText(frame, predicted_character, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (0, 0, 0), 3, cv2.LINE_AA)
+        if results.multi_hand_landmarks:
+            for hand_landmarks in results.multi_hand_landmarks:
+                # Draw hand landmarks
+                mp_drawing.draw_landmarks(
+                    frame,  # frame to draw landmarks on
+                    hand_landmarks,  # model output landmarks
+                    mp_hands.HAND_CONNECTIONS,  # hand connections
+                    mp_drawing_styles.get_default_hand_landmarks_style(),
+                    mp_drawing_styles.get_default_hand_connections_style()
+                )
 
-    # Menampilkan frame
-    cv2.imshow('frame', frame)
+                data_aux = []
+                x_ = []
+                y_ = []
 
-    # Kondisi keluar: tekan 'q' untuk keluar
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+                # Collect hand landmarks
+                for i in range(len(hand_landmarks.landmark)):
+                    x = hand_landmarks.landmark[i].x
+                    y = hand_landmarks.landmark[i].y
 
-# Melepaskan capture dan menutup jendela
-cap.release()
-cv2.destroyAllWindows()
+                    x_.append(x)
+                    y_.append(y)
+
+                # Normalize the landmark data
+                for i in range(len(hand_landmarks.landmark)):
+                    x = hand_landmarks.landmark[i].x
+                    y = hand_landmarks.landmark[i].y
+                    data_aux.append(x - min(x_))  # Normalize x
+                    data_aux.append(y - min(y_))  # Normalize y
+
+                # Ensure the data matches the model's expected input size (42)
+                if len(data_aux) == 42:
+                    input_data = np.array([data_aux])
+                    input_data = input_data.astype(np.float32)
+
+                    # Predict using the model
+                    prediction = model.predict(input_data)
+                    predicted_class = np.argmax(prediction)
+                    predicted_character = labels_dict[predicted_class]
+
+                    x1 = int(min(x_) * W) - 10
+                    y1 = int(min(y_) * H) - 10
+                    x2 = int(max(x_) * W) + 10
+                    y2 = int(max(y_) * H) + 10
+
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 0), 4)
+                    cv2.putText(frame, predicted_character, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (0, 0, 0), 3, cv2.LINE_AA)
+
+        frame_placeholder.image(frame, channels="BGR", use_column_width=True)
+
+        # Check if Stop button was pressed and stop streaming
+        if stop_button:
+            is_streaming = False
+
+    # Clean up after the loop stops
+    if cap:
+        cap.release()
+    cv2.destroyAllWindows()
+    frame_placeholder.empty()
+
